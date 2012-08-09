@@ -17,7 +17,15 @@ if (isset($argv[1])){
 
 if ($title)
 {
-    $podnapisiNetClient = new PodnapisiNETXmlRpcClient('user', 'pass', $isCli);
+    $podnapisiNetClient = new PodnapisiNETXmlRpcClient(array(
+        'user'                  => 'user',
+        'password'              => 'pass',
+        'isCli'                 => $isCli,
+        'language'              => PodnapisiNETXmlRpcClient::LANG_ENGLISH,
+        'downloadNumber'        => 2,
+        'isEpisodeInFileName'   => true,
+        'sortSubtitlesBy'       => PodnapisiNETXmlRpcClient::SORT_BY_NUM_DOWNLOADS
+    ));
 
     $subtitleData = $podnapisiNetClient->getSubtitles($title, $season, $episode);
 

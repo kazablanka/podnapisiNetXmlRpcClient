@@ -28,12 +28,19 @@ class PodnapisiNETXmlRpcClient
     const LANG_GERMAN  = 5;
     const LANG_ITALIAN = 9;
     
-    private $isCli;
+    
     private $url = 'http://ssp.podnapisi.net:8000/RPC2/';
     private $userAgent = 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.1 (KHTML, like Gecko) Chrome/22.0.1207.1 Safari/537.1';
     
     private $user;
     private $password;
+    private $isCli;
+    
+    public $language;
+    public $downloadNumber;
+    public $isEpisodeInFileName;
+    public $sortSubtitlesBy;
+    
     private $session;
     private $nonce;
     
@@ -43,15 +50,33 @@ class PodnapisiNETXmlRpcClient
 
     /**
      *
-     * @param string $user Podnapisi.NET user name.
-     * @param string $pass Podnapisi.NET user password.
-     * @param bool $isCli 
+     * @param array $params Array with the needed params.
      */
-    function __construct($user, $pass, $isCli = false) 
+    function __construct($params) 
     {
-        $this->user = $user;
-        $this->password = $pass;
-        $this->isCli = $isCli;
+        $this->user = $params['user'];
+        $this->password = $params['password'];
+        
+        $this->isCli = ($params['isCli'])
+                ? $params['isCli']
+                : false;
+        
+        $this->language = ($params['language'])
+                ? $params['language']
+                : self::LANG_ENGLISH;
+        
+        $this->downloadNumber = ($params['downloadNumber'])
+                ? $params['downloadNumber']
+                : 2;
+        
+        $this->isEpisodeInFileName = ($params['isEpisodeInFileName'])
+                ? $this->isEpisodeInFileName
+                : false;
+        
+        $this->sortSubtitlesBy = ($params['sortSubtitlesBy'])
+                ? $params['sortSubtitlesBy']
+                : self::SORT_BY_NAME;
+        
     }
 
     /**
@@ -113,6 +138,11 @@ class PodnapisiNETXmlRpcClient
      */
     public function xmlRpcInitiate()
     {
+        if ($session) {
+            $this->printMessage('Already initiated.');
+            return false;
+        }
+        
         $this->printMessage('Attempting initiantion...');
         $xmlrpcRequest = $this->sendXmlRpcRequest('initiate', $this->userAgent);
         if (!$xmlrpcRequest) {
@@ -134,16 +164,20 @@ class PodnapisiNETXmlRpcClient
     
     /**
      *Authenticateto Podnapisi.NET service with the given credentials.
-     * @param string $user User name.
-     * @param string $pass Password.
      * @return bool True if authenticated. 
      */
-    public function xmlRpcAuthenticate($user, $pass)
+    public function xmlRpcAuthenticate()
     {
-        $pass = hash( 'sha256', md5($pass) . $this->nonce );
+        $this->password = hash( 'sha256', md5($this->password) . $this->nonce );
 
         $this->printMessage('Attempting authentication...');
-        $xmlrpcRequest = $this->sendXmlRpcRequest('authenticate', array($this->session, $user, $pass));
+
+        if (!$this->user)
+            $this->printMessage ('No user/pass specified. Authenticating anonymously. Download not possible.');
+            
+        $xmlrpcRequest = $this->sendXmlRpcRequest('authenticate', 
+                array($this->session, $this->user, $this->password));
+        
         if (!$xmlrpcRequest) {
             $this->printMessage('Error: No connection.');
             return false;
@@ -221,8 +255,7 @@ class PodnapisiNETXmlRpcClient
      */
     public function xmlGetSubtitleInfos($title, $season, $episode)
     {
-        $language = self::LANG_ENGLISH;
-        $url = "http://www.podnapisi.net/en/ppodnapisi/search?sK=$title&sTS=$season&sTE=$episode&sJ=$language&sXML=1";
+        $url = "http://www.podnapisi.net/en/ppodnapisi/search?sK=$title&sTS=$season&sTE=$episode&sJ=$this->language&sXML=1";
         
 
         $this->printMessage('Title: ' . $title);
@@ -264,11 +297,9 @@ class PodnapisiNETXmlRpcClient
         
     /**
      *Gets the Subtitles structure along with subtitle download links.
-     * 
-     * @param const $sortBy SORT_BY_NAME or SORT_BY_NUM_DOWNLOADS.
      * @return mixed Array on success. 
      */
-    public function getSubtitlesData($sortBy = self::SORT_BY_NAME)
+    public function getSubtitlesData()
     {
         $subtitles = array();
         if (!$this->subtitleSpecs){
@@ -276,7 +307,7 @@ class PodnapisiNETXmlRpcClient
             return null;
         }
         
-        if ($sortBy == self::SORT_BY_NUM_DOWNLOADS) {
+        if ($this->sortSubtitlesBy == self::SORT_BY_NUM_DOWNLOADS) {
             
             //array multisort remembers only string indexes
             foreach ($this->subtitleSpecs as $key => $row)
@@ -345,6 +376,9 @@ class PodnapisiNETXmlRpcClient
      */
     public static function cliZipExtract($archiveFile, $removeArchiveAfterExtract = false)
     {
+        if (!$this->isCli)
+            return false;
+        
         $zip = new ZipArchive;
         $res = $zip->open($archiveFile);
         if ($res === TRUE) {
@@ -370,16 +404,17 @@ class PodnapisiNETXmlRpcClient
      *Use only from command line. Attempts to download the number of $ammount 
      * subtitles found in $subtitleData. 
      * @param Array $subtitleData Result of the xmlGetSubtitleInfos() function. 
-     * @param int $ammount Number of subtitles to download
-     * @param bool $episodeInFileName Prints the episode number at the beginig of subtitle.
      */
-    public function cliDownloadSubtitles($subtitleData, $ammount = 2, $episodeInFileName = false)
+    public function cliDownloadSubtitles($subtitleData)
     {
+        if (!$this->isCli)
+            return false;
+        
         $i = 0; 
         $previousSubtitleRelease = '';
         
         $this->printMessage('');
-        $this->printMessage('Getting the first ' . $ammount . ' files...');
+        $this->printMessage('Getting the first ' . $this->downloadNumber . ' files...');
         $this->printMessage('');
         
         foreach ($subtitleData as $key => $subtitle)
@@ -391,13 +426,13 @@ class PodnapisiNETXmlRpcClient
                     $extractedFileName = $this->cliZipExtract($zipFile, true);
                 
                 //ads an episode number to the extracted file name
-                if ($episodeInFileName && $extractedFileName) {
+                if ($this->isEpisodeInFileName && $extractedFileName) {
                     $newFile = str_pad($subtitle['tvEpisode'], 2, '0', STR_PAD_LEFT) 
                             . '.' . $subtitle['release'];
                     rename($extractedFileName, $newFile.'.srt');
                 }
                 
-                if (++$i >= $ammount)
+                if (++$i >= $this->downloadNumber)
                     break;
                 
                 $previousSubtitleRelease = $subtitle['release'];
@@ -414,12 +449,14 @@ class PodnapisiNETXmlRpcClient
     public function getSubtitles($title, $season, $episode)
     {
         if ($this->xmlGetSubtitleInfos($title, $season, $episode))
-            if ($this->xmlRpcInitAuth($this->user, $this->password))
+            if ($this->xmlRpcInitiate() && $this->xmlRpcAuthenticate())
                 if ($this->xmlRpcGetDownloadLinks()) 
                     return $this->getSubtitlesData(
                             PodnapisiNETXmlRpcClient::SORT_BY_NUM_DOWNLOADS);
     }
 }
+
+
 
 
 
